@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k8s-backend
+  namespace: kube-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: k8s-backend
+  template:
+    metadata:
+      labels:
+        app: k8s-backend
+    spec:
+      serviceAccountName: k8s-backend-sa
+      containers:
+      - name: backend
+        image: afkurniawan/k8s-backend:v21
+        ports:
+        - containerPort: 80
