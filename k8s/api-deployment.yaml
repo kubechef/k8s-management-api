@@ -16,6 +16,15 @@ spec:
       serviceAccountName: k8s-backend-sa
       containers:
       - name: backend
-        image: afkurniawan/k8s-backend:v21
+        image: afkurniawan/k8s-backend:crud-deploy-v24-debug-41
+        env:
+            - name: DB_HOST
+              value: postgres
+            - name: DB_NAME
+              value: kubechef
+            - name: DB_USER
+              value: postgres
+            - name: DB_PASSWORD
+              value: postgres
         ports:
         - containerPort: 80
