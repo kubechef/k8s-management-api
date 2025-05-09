@@ -25,10 +25,10 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: devops-role-binding
+  name: k8s-backend-admin-binding
 roleRef:
   kind: ClusterRole
-  name: devops-basic-role
+  name: cluster-admin
   apiGroup: rbac.authorization.k8s.io
 subjects:
 - kind: ServiceAccount
