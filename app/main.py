@@ -2,7 +2,7 @@ from app.configs.kube_loader import load_kube_config
 load_kube_config()
 
 from fastapi import FastAPI, Query, Path, Depends, HTTPException, Body
-from app.apis import auth, deployments, namespace, configmap, pod
+from app.apis import auth, deployments, namespace, configmap, pods
 
 app = FastAPI()
 
@@ -28,25 +28,7 @@ app.include_router(deployments.router)
 # === ConfigMaps ===
 app.include_router(configmap.router, tags=["ConfigMap"])
 
-app.include_router(pod.router, tags=["Pods"])
-
-# # ==== Pods ====
-# @app.get("/pods")
-# def api_list_pods(namespace: str = Query("default"), user=Depends(get_current_user)):
-#     return kube_helper.list_pods(namespace)
-
-# @app.get("/pods/{name}/logs")
-# def api_get_logs(name: str = Path(...), namespace: str = Query("default"), user=Depends(get_current_user)):
-#     return kube_helper.get_pod_logs(name, namespace)
-
-# @app.get("/pods/{pod_name}/logs/stream")
-# def api_stream_pod_logs(pod_name: str, namespace: str = Query("default"), user=Depends(get_current_user)):
-#     return StreamingResponse(
-#         kube_helper.stream_logs(namespace, pod_name),
-#         media_type="text/plain"
-#     )
-
-
+app.include_router(pods.router, tags=["Pods"])
 
 
 @app.get("/services")

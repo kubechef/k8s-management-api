@@ -8,17 +8,11 @@ import textwrap
 
 async def create_config_map_from_text(namespace: str, name: str, content: str, filename: str):
     try:
-        # Format content menjadi YAML dengan indentasi
-        formatted_content = f"{filename}: |\n" + textwrap.indent(content, '  ')  # 2 spasi indentasi per baris
-
-        # Menggunakan yaml.dump untuk mengonversi data menjadi YAML
-        yaml_content = yaml.dump({filename: formatted_content}, sort_keys=False, default_flow_style=False)
-
         config_map = client.V1ConfigMap(
             api_version="v1",
             kind="ConfigMap",
             metadata=client.V1ObjectMeta(name=name, namespace=namespace),
-            data={filename: yaml_content}
+            data={filename: content}
         )
 
         api_instance = client.CoreV1Api()
@@ -29,7 +23,7 @@ async def create_config_map_from_text(namespace: str, name: str, content: str, f
         return {
             "name": name,
             "namespace": namespace,
-            "data": {filename: yaml_content},  # Return YAML formatted content
+            "data": {filename: content},
             "message": f"ConfigMap '{name}' created successfully."
         }
 
@@ -39,6 +33,7 @@ async def create_config_map_from_text(namespace: str, name: str, content: str, f
     except Exception as e:
         logging.error(f"Unexpected error while creating ConfigMap: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to create ConfigMap: {str(e)}")
+
 
 
 # Fungsi pembungkus yang dipanggil dari endpoint
