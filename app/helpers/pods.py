@@ -1,7 +1,8 @@
 from kubernetes import client, watch
 from kubernetes.client import CoreV1Api, AppsV1Api, BatchV1Api
 from fastapi import HTTPException
-from app.schemas.pods import PodCreateRequest, PodListResponse, PodInfo, ContainerSpec
+from app.schemas.pods import PodCreateRequest, PodListResponse, PodInfo, ContainerSpec, ExecCommandRequest
+from typing import Dict, List, Optional
 
 core_v1 = CoreV1Api()
 apps_v1 = AppsV1Api()
@@ -82,7 +83,11 @@ def create_pod(namespace: str, payload: PodCreateRequest):
             ))
 
     pod_manifest = client.V1Pod(
-        metadata=client.V1ObjectMeta(name=payload.name),
+        metadata=client.V1ObjectMeta(
+            name=payload.name,
+            labels=payload.labels, 
+            annotations=payload.annotations
+            ),
         spec=client.V1PodSpec(
             containers=containers,
             volumes=volumes
@@ -117,3 +122,124 @@ def delete_pod(namespace: str, name: str):
         return {"message": f"Pod '{name}' di namespace '{namespace}' berhasil dihapus."}
     except ApiException as e:
         raise HTTPException(status_code=e.status, detail=e.body)
+
+# == Labels ==
+@handle_k8s_exception
+def update_pod_labels(namespace: str, pod_name: str, labels: Dict[str, str]):
+    v1 = client.CoreV1Api()
+
+    patch_body = {
+        "metadata": {
+            "labels": labels
+        }
+    }
+
+    resp = v1.patch_namespaced_pod(
+        name=pod_name,
+        namespace=namespace,
+        body=patch_body
+    )
+    return {"message": f"Labels pada Pod '{pod_name}' berhasil diperbarui."}
+
+@handle_k8s_exception
+def delete_pod_label(namespace: str, pod_name: str, label_key: str):
+    v1 = client.CoreV1Api()
+
+    patch_body = {
+        "metadata": {
+            "labels": {
+                label_key: None  # Hapus label ini
+            }
+        }
+    }
+
+    resp = v1.patch_namespaced_pod(
+        name=pod_name,
+        namespace=namespace,
+        body=patch_body
+    )
+    return {"message": f"Label '{label_key}' berhasil dihapus dari Pod '{pod_name}'."}
+
+# ==Annotations==
+@handle_k8s_exception
+def update_pod_annotations(namespace: str, pod_name: str, annotations: Dict[str, str]):
+    v1 = client.CoreV1Api()
+
+    patch_body = {
+        "metadata": {
+            "annotations": annotations
+        }
+    }
+
+    resp = v1.patch_namespaced_pod(
+        name=pod_name,
+        namespace=namespace,
+        body=patch_body
+    )
+    return {"message": f"Annotations pada Pod '{pod_name}' berhasil diperbarui."}
+
+@handle_k8s_exception
+def delete_pod_annotation(namespace: str, pod_name: str, annotation_key: str):
+    v1 = client.CoreV1Api()
+
+    patch_body = {
+        "metadata": {
+            "annotations": {
+                annotation_key: None
+            }
+        }
+    }
+
+    resp = v1.patch_namespaced_pod(
+        name=pod_name,
+        namespace=namespace,
+        body=patch_body
+    )
+    return {"message": f"Annotation '{annotation_key}' berhasil dihapus dari Pod '{pod_name}'."}
+
+@handle_k8s_exception
+def delete_pod_annotation(namespace: str, pod_name: str, annotation_key: str):
+    v1 = client.CoreV1Api()
+
+    patch_body = {
+        "metadata": {
+            "annotations": {
+                annotation_key: None
+            }
+        }
+    }
+
+    resp = v1.patch_namespaced_pod(
+        name=pod_name,
+        namespace=namespace,
+        body=patch_body
+    )
+    return {"message": f"Annotation '{annotation_key}' berhasil dihapus dari Pod '{pod_name}'."}
+
+from kubernetes.stream import stream
+
+@handle_k8s_exception
+def exec_command_in_pod(namespace: str, pod_name: str, command: List[str], container: Optional[str] = None):
+    v1 = client.CoreV1Api()
+
+    exec_resp = stream(
+        v1.connect_get_namespaced_pod_exec,
+        name=pod_name,
+        namespace=namespace,
+        container=container,
+        command=command,
+        stderr=True,
+        stdin=False,
+        stdout=True,
+        tty=False
+    )
+    return {"output": exec_resp}
+
+@handle_k8s_exception
+def restart_pod(namespace: str, pod_name: str):
+    v1 = client.CoreV1Api()
+    delete_options = client.V1DeleteOptions()
+    v1.delete_namespaced_pod(name=pod_name, namespace=namespace, body=delete_options)
+
+    return {"message": f"Pod '{pod_name}' di namespace '{namespace}' berhasil dihapus untuk restart."}
+

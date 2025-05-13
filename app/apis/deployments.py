@@ -1,46 +1,26 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Body, Path
-from typing import List, Optional
-from app.helpers import deployment
-from app.helpers.deployment import patch_deployment, remove_deployment_labels
+from fastapi import APIRouter, Depends
+from app.helpers.deployment import create_deployment, update_deployment, list_deployments, get_deployment_detail, delete_deployment
+from app.schemas.deployment import DeploymentCreateRequest, DeploymentUpdateRequest
 from app.helpers.auth import get_current_user
-from app.schemas.deployments import DeploymentCreate, DeploymentUpdate, DeploymentResponse
 
-router = APIRouter(prefix="/deployments", tags=["Deployments"])
+router = APIRouter(prefix="/deployments")
 
-@router.get("", response_model=List[DeploymentResponse])
-def list_deployments(namespace: str = Query("default"), user=Depends(get_current_user)):
-    return deployment.list_deployments(namespace)
+@router.post("/{namespace}/create")
+def create_k8s_deployment(namespace: str, payload: DeploymentCreateRequest, user=Depends(get_current_user)):
+    return create_deployment(namespace, payload)
 
-@router.get("/{name}")
-def get_deployment(name: str, namespace: str = Query("default"), user=Depends(get_current_user)):
-    return deployment.get_deployment(name, namespace)
+@router.put("/{namespace}/{name}/update")
+def update_k8s_deployment(namespace: str, name: str, payload: DeploymentUpdateRequest, user=Depends(get_current_user)):
+    return update_deployment(namespace, name, payload)
 
-@router.post("")
-def create_deployment(deploy: DeploymentCreate, user=Depends(get_current_user)):
-    return deployment.create_deployment(deploy)
+@router.get("/{namespace}/list")
+def get_k8s_deployments(namespace: str, user=Depends(get_current_user)):
+    return list_deployments(namespace)
 
-@router.patch("/{name}")
-async def update_deployment(
-    name: str,
-    namespace: str = Query("default"),
-    update_data: dict = Body(...),
-    labels_to_remove: Optional[List[str]] = Query(None),
-    user=Depends(get_current_user),
-):
-    return patch_deployment(name, namespace, update_data, labels_to_remove)
+@router.get("/{namespace}/{name}/info")
+def get_k8s_deployment_detail(namespace: str, name: str, user=Depends(get_current_user)):
+    return get_deployment_detail(namespace, name)
 
-
-@router.patch("/{name}/labels/remove")
-async def remove_labels(
-    name: str,
-    namespace: str = Query("default"),
-    labels_to_remove: List[str] = Body(..., embed=True),
-    user=Depends(get_current_user),
-):
-    return remove_deployment_labels(name, namespace, labels_to_remove)
-
-@router.delete("/{name}")
-def delete_deployment(name: str, namespace: str = Query("default"), user=Depends(get_current_user)):
-    return deployment.delete_deployment(name, namespace)
-
-
+@router.delete("/{namespace}/{name}/delete")
+def delete_k8s_deployment(namespace: str, name: str, user=Depends(get_current_user)):
+    return delete_deployment(namespace, name)

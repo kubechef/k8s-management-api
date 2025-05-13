@@ -1,15 +1,6 @@
-# === kube_helper.py ===
-from kubernetes import client, config, watch
-from kubernetes.client import CoreV1Api, AppsV1Api, BatchV1Api
+from kubernetes import client
+from app.schemas.deployment import DeploymentCreateRequest, DeploymentUpdateRequest
 from fastapi import HTTPException
-from datetime import datetime
-from typing import Optional, List
-
-
-
-core_v1 = CoreV1Api()
-apps_v1 = AppsV1Api()
-batch_v1 = BatchV1Api()
 
 def handle_k8s_exception(func):
     def wrapper(*args, **kwargs):
@@ -19,208 +10,187 @@ def handle_k8s_exception(func):
             raise HTTPException(status_code=e.status, detail=e.reason)
     return wrapper
 
-
-# === DEPLOYMENT OPERATIONS ===
 @handle_k8s_exception
-def list_deployments(namespace: str):
-    deployments = apps_v1.list_namespaced_deployment(namespace)
-    return [
-        {
-            "name": d.metadata.name,
-            "replicas": d.status.replicas or 0,
-            "available": d.status.available_replicas or 0,
-            "updated": d.status.updated_replicas or 0,
-            "unavailable": d.status.unavailable_replicas or 0,
-            "labels": d.metadata.labels,
-            "annotations": d.metadata.annotations,
-            "creation_timestamp": d.metadata.creation_timestamp.isoformat() if d.metadata.creation_timestamp else None,
-            "namespace": d.metadata.namespace,
-            "uid": d.metadata.uid,
-            "image": d.spec.template.spec.containers[0].image if d.spec.template.spec.containers else None  # Menambahkan image
-        } for d in deployments.items
+def create_deployment(namespace: str, payload: DeploymentCreateRequest):
+    apps_v1 = client.AppsV1Api()
+
+    # Handle volume mounts
+    volume_mounts = [
+        client.V1VolumeMount(name=vm.name, mount_path=vm.mountPath)
+        for vm in (payload.volumeMounts or [])
     ]
 
-# Get a specific deployment
-@handle_k8s_exception
-def get_deployment(name: str, namespace: str):
-    deployment = apps_v1.read_namespaced_deployment(name, namespace)
-    return {
-        "name": deployment.metadata.name,
-        "replicas": deployment.status.replicas or 0,
-        "available": deployment.status.available_replicas or 0,
-        "updated": deployment.status.updated_replicas or 0,
-        "unavailable": deployment.status.unavailable_replicas or 0,
-        "labels": deployment.metadata.labels,
-        "annotations": deployment.metadata.annotations,
-        "creation_timestamp": deployment.metadata.creation_timestamp,
-        "namespace": deployment.metadata.namespace,
-        "uid": deployment.metadata.uid
-    }
+    # Handle resources
+    resources = None
+    if payload.resources:
+        resources = client.V1ResourceRequirements(
+            limits=payload.resources.limits,
+            requests=payload.resources.requests
+        )
 
-@handle_k8s_exception
-def create_deployment(deploy_data):
-    # Gunakan label "app" sebagai fallback
-    default_app_label = {"app": deploy_data.name}
-
-    # Gunakan selector atau fallback
-    selector_labels = deploy_data.selector or deploy_data.labels or default_app_label
-
-    # Gunakan labels untuk pod template dan metadata, harus match dengan selector
-    template_labels = deploy_data.labels or selector_labels or default_app_label
-
-    # Ambil container port dari payload
-    container_port = deploy_data.container_port
-
-    # Definisikan kontainer
+    # Define container
     container = client.V1Container(
-        name=deploy_data.name,
-        image=deploy_data.image,
-        ports=[client.V1ContainerPort(container_port=container_port)]
+        name=payload.name,
+        image=payload.image,
+        ports=[client.V1ContainerPort(container_port=port) for port in payload.ports or []],
+        env=[client.V1EnvVar(name=e.name, value=e.value) for e in (payload.env or [])],
+        command=payload.command,
+        args=payload.args,
+        volume_mounts=volume_mounts,
+        resources=resources
     )
 
-    # Template pod dengan label yang cocok dengan selector
+    # Handle volumes
+    volumes = []
+    for v in (payload.volumes or []):
+        if v.emptyDir is not None:
+            volumes.append(client.V1Volume(name=v.name, empty_dir=client.V1EmptyDirVolumeSource()))
+        elif v.configMap is not None:
+            volumes.append(client.V1Volume(name=v.name, config_map=client.V1ConfigMapVolumeSource(name=v.configMap.name)))
+
+    # Pod template
     template = client.V1PodTemplateSpec(
-        metadata=client.V1ObjectMeta(labels=template_labels),
-        spec=client.V1PodSpec(containers=[container])
+        metadata=client.V1ObjectMeta(labels=payload.labels),
+        spec=client.V1PodSpec(containers=[container], volumes=volumes)
     )
 
-    # Selector harus cocok dengan label pada template
+    # Deployment spec
     spec = client.V1DeploymentSpec(
-        replicas=deploy_data.replicas,
-        selector=client.V1LabelSelector(match_labels=selector_labels),
+        replicas=payload.replicas,
+        selector=client.V1LabelSelector(match_labels=payload.labels),
         template=template
     )
 
-    # Metadata deployment
-    metadata = client.V1ObjectMeta(
-        name=deploy_data.name,
-        labels=template_labels  # Optional, hanya untuk penandaan deployment
-    )
-
-    # Buat objek deployment
+    # Deployment object
     deployment = client.V1Deployment(
-        metadata=metadata,
+        metadata=client.V1ObjectMeta(name=payload.name),
         spec=spec
     )
 
-    # Kirim ke API Kubernetes
-    result = apps_v1.create_namespaced_deployment(namespace=deploy_data.namespace, body=deployment)
+    apps_v1.create_namespaced_deployment(namespace=namespace, body=deployment)
 
-    return {
-        "status": "Success",
-        "message": f"Deployment '{result.metadata.name}' created.",
-        "timestamp": datetime.now().isoformat(),
-        "labels": result.metadata.labels,
-        "selector": result.spec.selector.match_labels,
-        "name": result.metadata.name,
-        "namespace": result.metadata.namespace,
-        "replicas": result.spec.replicas,
-        "image": result.spec.template.spec.containers[0].image,
-        "container_port": container_port,
-        "uid": result.metadata.uid,
-        "creation_timestamp": result.metadata.creation_timestamp.isoformat()
-    }
-
-
-
-
+    return {"message": f"Deployment '{payload.name}' berhasil dibuat di namespace '{namespace}'."}
 
 @handle_k8s_exception
-def remove_deployment_labels(name: str, namespace: str, labels_to_remove: List[str]):
-    deployment = apps_v1.read_namespaced_deployment(name, namespace)
-    
-    patch_ops = []
+def update_deployment(namespace: str, name: str, payload: DeploymentUpdateRequest):
+    apps_v1 = client.AppsV1Api()
 
-    # Hapus label dari metadata.labels
-    for label in labels_to_remove:
-        if deployment.metadata.labels and label in deployment.metadata.labels:
-            patch_ops.append({
-                "op": "remove",
-                "path": f"/metadata/labels/{label}"
-            })
+    # Ambil deployment yang sudah ada
+    deployment = apps_v1.read_namespaced_deployment(name=name, namespace=namespace)
 
-    # Hapus label dari template.metadata.labels
-    for label in labels_to_remove:
-        if deployment.spec.template.metadata.labels and label in deployment.spec.template.metadata.labels:
-            patch_ops.append({
-                "op": "remove",
-                "path": f"/spec/template/metadata/labels/{label}"
-            })
+    # Update field yang diizinkan
+    deployment.spec.replicas = payload.replicas
 
-    if not patch_ops:
-        return {"status": "No labels to remove"}
+    container = deployment.spec.template.spec.containers[0]
+    container.image = payload.image
+    container.command = payload.command
+    container.args = payload.args
+    container.env = [
+        client.V1EnvVar(name=env.name, value=env.value) for env in (payload.env or [])
+    ]
+    container.env_from = [
+        client.V1EnvFromSource(secret_ref=client.V1SecretEnvSource(name=env.secretRef.name))
+        for env in (payload.envFrom or [])
+    ]
+    container.ports = [client.V1ContainerPort(container_port=p) for p in (payload.ports or [])]
+    container.resources = client.V1ResourceRequirements(**payload.resources.dict()) if payload.resources else None
+    container.volume_mounts = [
+        client.V1VolumeMount(name=vm.name, mount_path=vm.mountPath) for vm in (payload.volumeMounts or [])
+    ]
 
-    results = apps_v1.patch_namespaced_deployment(
-        name, namespace, patch_ops
+    deployment.spec.template.metadata.labels = payload.labels or {}
+    deployment.spec.template.metadata.annotations = payload.annotations or {}
+
+    deployment.spec.template.spec.volumes = []
+    for v in payload.volumes or []:
+        if v.emptyDir is not None:
+            deployment.spec.template.spec.volumes.append(
+                client.V1Volume(name=v.name, empty_dir=client.V1EmptyDirVolumeSource())
+            )
+        elif v.configMap is not None:
+            deployment.spec.template.spec.volumes.append(
+                client.V1Volume(
+                    name=v.name,
+                    config_map=client.V1ConfigMapVolumeSource(name=v.configMap["name"])
+                )
+            )
+
+    # Kirim perubahan
+    resp = apps_v1.patch_namespaced_deployment(name=name, namespace=namespace, body=deployment)
+
+    return {"message": f"Deployment '{name}' berhasil diupdate di namespace '{namespace}'."}
+
+@handle_k8s_exception
+def list_deployments(namespace: str):
+    apps_v1 = client.AppsV1Api()
+    deployments = apps_v1.list_namespaced_deployment(namespace=namespace)
+
+    result = []
+    for dep in deployments.items:
+        container = dep.spec.template.spec.containers[0] if dep.spec.template.spec.containers else None
+
+        result.append({
+            "name": dep.metadata.name,
+            "replicas": dep.spec.replicas,
+            "labels": dep.metadata.labels,
+            "annotations": dep.metadata.annotations,
+            "image": container.image if container else None,
+            "command": container.command if container else None,
+            "args": container.args if container else None,
+            "env": [{"name": e.name, "value": e.value} for e in (container.env or [])] if container else [],
+            "ports": [p.container_port for p in (container.ports or [])] if container else [],
+            "volumeMounts": [{"name": vm.name, "mountPath": vm.mount_path} for vm in (container.volume_mounts or [])] if container else [],
+            "resources": container.resources.to_dict() if container and container.resources else {},
+            "volumes": [
+                {
+                    "name": v.name,
+                    "type": "emptyDir" if v.empty_dir else "configMap" if v.config_map else "other",
+                    "configMap": {"name": v.config_map.name} if v.config_map else None
+                }
+                for v in (dep.spec.template.spec.volumes or [])
+            ] if dep.spec.template.spec.volumes else []
+        })
+
+    return {"deployments": result}
+
+@handle_k8s_exception
+def get_deployment_detail(namespace: str, name: str):
+    apps_v1 = client.AppsV1Api()
+    dep = apps_v1.read_namespaced_deployment(name=name, namespace=namespace)
+
+    container = dep.spec.template.spec.containers[0] if dep.spec.template.spec.containers else None
+
+    return {
+        "name": dep.metadata.name,
+        "replicas": dep.spec.replicas,
+        "labels": dep.metadata.labels,
+        "annotations": dep.metadata.annotations,
+        "image": container.image if container else None,
+        "command": container.command if container else None,
+        "args": container.args if container else None,
+        "env": [{"name": e.name, "value": e.value} for e in (container.env or [])] if container else [],
+        "ports": [p.container_port for p in (container.ports or [])] if container else [],
+        "volumeMounts": [{"name": vm.name, "mountPath": vm.mount_path} for vm in (container.volume_mounts or [])] if container else [],
+        "resources": container.resources.to_dict() if container and container.resources else {},
+        "volumes": [
+            {
+                "name": v.name,
+                "type": "emptyDir" if v.empty_dir else "configMap" if v.config_map else "other",
+                "configMap": {"name": v.config_map.name} if v.config_map else None
+            }
+            for v in (dep.spec.template.spec.volumes or [])
+        ] if dep.spec.template.spec.volumes else []
+    }
+
+@handle_k8s_exception
+def delete_deployment(namespace: str, name: str):
+    apps_v1 = client.AppsV1Api()
+
+    # Menghapus deployment
+    apps_v1.delete_namespaced_deployment(
+        name=name,
+        namespace=namespace,
+        body=client.V1DeleteOptions(propagation_policy="Foreground")
     )
 
-    return {
-        "status": "Success",
-        "message": f"Labels removed from deployment '{name}'.",
-        "removed": labels_to_remove,
-        "updated_labels": results.metadata.labels
-    }
-
-
-
-# Delete a deployment
-@handle_k8s_exception
-def delete_deployment(name: str, namespace: str):
-    result = apps_v1.delete_namespaced_deployment(name=name, namespace=namespace)
-    return {
-        "status": result.status,
-        "message": "Deployment deleted",
-    }
-
-@handle_k8s_exception
-def patch_deployment(name: str, namespace: str, update_data: dict, labels_to_remove: List[str] = None):
-    deployment = apps_v1.read_namespaced_deployment(name, namespace)
-
-    # Update existing labels
-    metadata_labels = deployment.metadata.labels or {}
-    template_labels = deployment.spec.template.metadata.labels or {}
-
-    if update_data.get("labels"):
-        metadata_labels.update(update_data["labels"])
-        template_labels.update(update_data["labels"])
-
-    # Hapus labels jika diminta
-    if labels_to_remove:
-        for key in labels_to_remove:
-            metadata_labels.pop(key, None)
-            template_labels.pop(key, None)
-
-    # Buat patch payload dengan labels yang telah diubah
-    patch_payload = {
-        "spec": {
-            "replicas": update_data.get("replicas", deployment.spec.replicas),
-            "template": {
-                "metadata": {
-                    "labels": template_labels
-                },
-                "spec": {
-                    "containers": [
-                        {
-                            "name": deployment.spec.template.spec.containers[0].name,
-                            "image": update_data.get("image", deployment.spec.template.spec.containers[0].image)
-                        }
-                    ]
-                }
-            }
-        },
-        "metadata": {
-            "labels": metadata_labels
-        }
-    }
-
-    result = apps_v1.patch_namespaced_deployment(name, namespace, patch_payload)
-    return {
-        "status": "Success",
-        "labels": result.metadata.labels,
-        "template_labels": result.spec.template.metadata.labels,
-        "name": result.metadata.name,
-        "namespace": result.metadata.namespace,
-        "replicas": result.spec.replicas,
-        "image": result.spec.template.spec.containers[0].image
-    }
-
+    return {"message": f"Deployment '{name}' berhasil dihapus dari namespace '{namespace}'."}

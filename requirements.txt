@@ -2,8 +2,9 @@ fastapi
 uvicorn
 kubernetes
 python-jose[cryptography]
-passlib[bcrypt]
 psycopg2-binary
 sqlalchemy
 passlib[bcrypt]
 python-multipart
+websocket-client==1.5.1
+uvicorn[standard]

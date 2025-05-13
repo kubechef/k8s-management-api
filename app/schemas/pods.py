@@ -39,6 +39,12 @@ class VolumeSpec(BaseModel):
 
 class PodCreateRequest(BaseModel):
     name: str
+    labels: Optional[Dict[str, str]] = None
+    annotations: Optional[Dict[str, str]] = None
     containers: List[ContainerSpec]
     volumes: Optional[List[VolumeSpec]] = None
+
+class ExecCommandRequest(BaseModel):
+    command: List[str]
+    container: Optional[str] = None
 
