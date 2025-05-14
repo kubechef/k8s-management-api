@@ -6,6 +6,11 @@ class NamespaceBase(BaseModel):
     name: str
     labels: Optional[Dict[str, str]] = None
 
+class K8snamespace(BaseModel):
+    name: str
+    status: Optional[str]
+    age: Optional[str]
+    labels: Optional[Dict[str, str]] = None
 
 class NamespaceCreate(NamespaceBase):
     pass

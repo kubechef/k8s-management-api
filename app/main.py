@@ -1,7 +1,7 @@
 from app.configs.kube_loader import load_kube_config
 load_kube_config()
 from fastapi import FastAPI, Query, Path, Depends, HTTPException, Body
-from app.apis import auth, deployments, namespace, configmap, pods, service, dashboard, events
+from app.apis import auth, deployments, namespace, configmap, pods, service, dashboard, events, nodes
 from fastapi.middleware.cors import CORSMiddleware
 
 
@@ -24,7 +24,9 @@ app.add_middleware(
 
 app.include_router(dashboard.router, tags=["Dashboard"])
 
-app.include_router(events.router, tags=["Events"])    
+app.include_router(events.router, tags=["Events"])  
+
+app.include_router(nodes.router, tags=["Nodes"])
 
 # ==== Auth ====
 app.include_router(auth.router, tags=["Auth"])

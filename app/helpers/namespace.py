@@ -1,9 +1,12 @@
-from kubernetes import client
+from kubernetes import client, watch
 from fastapi import HTTPException
 from typing import Optional, Dict, List
 from datetime import datetime
+from fastapi import WebSocket
+from typing import Iterator
 from app.schemas.namespace import (
     NamespaceBase,
+    K8snamespace,
     ResourceQuotaSpec,
     LimitRangeSpec,
     RBACSpec,
@@ -26,9 +29,35 @@ def handle_k8s_exception(func):
 # === NAMESPACE ===
 
 @handle_k8s_exception
-def list_namespaces():
-    namespaces = core_v1.list_namespace()
-    return [ns.metadata.name for ns in namespaces.items]
+# def stream_namespaces(websocket: WebSocket):
+#     await websocket.accept()
+#     try:
+#         while True:
+#             namespaces = core_v1.list_namespace()
+#             namespace_names = [ns.metadata.name for ns in namespaces.items]
+#             await websocket.send_json(namespace_names)
+#     except Exception as e:
+#         await websocket.close()
+def stream_namespaces() -> Iterator[K8snamespace]:
+    v1 = client.CoreV1Api()
+    w = watch.Watch()
+
+    print("🔄 Watching namespaces continuously...")
+
+    while True:
+        try:
+            for namespace in w.stream(v1.list_namespace, timeout_seconds=60):
+                obj = namespace["object"]
+                yield K8snamespace(
+                    name=obj.metadata.name,
+                    status=obj.status.phase,
+                    age=obj.metadata.creation_timestamp.isoformat() if obj.metadata.creation_timestamp else None,
+                    labels=obj.metadata.labels,
+                )
+        except Exception as e:
+            print(f"⚠️ Error in namespace stream: {e}")
+            time.sleep(1) # retry delay
+
 
 @handle_k8s_exception
 def get_namespace_details(name: str):

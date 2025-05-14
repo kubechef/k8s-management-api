@@ -1,5 +1,9 @@
-from kubernetes import client
+from kubernetes import client, watch
 from app.schemas.node_info import NodeInfo, NodeCondition, CombinedNodeInfo, ResourceUsage
+import asyncio
+from app.configs.ws_connection_manager import ConnectionManager
+
+node_manager = ConnectionManager()
 
 def get_node_info() -> list[CombinedNodeInfo]:
     v1 = client.CoreV1Api()

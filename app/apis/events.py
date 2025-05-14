@@ -1,56 +1,75 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from app.helpers.events import get_recent_events, stream_events_sync, stream_events_sync_continuous
-from fastapi.responses import JSONResponse
+from kubernetes import client, watch
 import asyncio
-import contextlib
-from concurrent.futures import ThreadPoolExecutor
+from app.configs.ws_connection_manager import ConnectionManager
 
 router = APIRouter()
-executor = ThreadPoolExecutor()
+event_manager = ConnectionManager()
+
 @router.websocket("/dashboard/stream/events")
 async def ws_events(websocket: WebSocket):
-    await websocket.accept()
-    loop = asyncio.get_event_loop()
-    print("✅ WebSocket connection accepted")
+    # Terima koneksi WebSocket
+    await event_manager.connect(websocket)
+    print("✅ WebSocket connected for events")
+    
+    core = client.CoreV1Api()
+    w = watch.Watch()
+    queue = asyncio.Queue()
+    loop = asyncio.get_event_loop()  # Simpan loop utama
 
-    def generator():
-        return stream_events_sync_continuous()
+    def event_watcher_blocking():
+        try:
+            print("🔍 Starting event watcher in background thread")
+            for event in w.stream(core.list_event_for_all_namespaces, timeout_seconds=0):
+                obj = event["object"]
+                data = {
+                    "type": event["type"],
+                    "reason": obj.reason,
+                    "message": obj.message,
+                    "namespace": obj.metadata.namespace,
+                    "involvedObject": {
+                        "kind": obj.involved_object.kind,
+                        "name": obj.involved_object.name,
+                    },
+                    "timestamp": obj.last_timestamp.isoformat() if obj.last_timestamp else None
+                }
+                # Kirim data ke queue dari thread ke main loop tanpa warning
+                asyncio.run_coroutine_threadsafe(queue.put(data), loop)
+        except Exception as e:
+            print(f"❌ Exception in watcher thread: {e}")
+        finally:
+            w.stop()
+
+    # Jalankan thread watcher
+    watcher_task = loop.run_in_executor(None, event_watcher_blocking)
 
     try:
-        async for event in _async_generator_from_thread(generator, loop):
-            data = {
-                "type": event.type,
-                "reason": event.reason,
-                "message": event.message,
-                "involved_object": event.involved_object,
-                "source": event.source,
-                "timestamp": event.timestamp.isoformat()
-               
+        # ⏱ Kirim semua event yang ada saat pertama kali terhubung (initial events)
+        events = core.list_event_for_all_namespaces()
+        for obj in events.items:
+            initial_data = {
+                "type": "INITIAL",
+                "reason": obj.reason,
+                "message": obj.message,
+                "namespace": obj.metadata.namespace,
+                "involvedObject": {
+                    "kind": obj.involved_object.kind,
+                    "name": obj.involved_object.name,
+                },
+                "timestamp": obj.last_timestamp.isoformat() if obj.last_timestamp else None
             }
-           # print(f"🔄 Sending event to WebSocket: {data}")
-            await websocket.send_json(data)
+            await websocket.send_json(initial_data)
+
+        # ⏳ Kirim event baru yang diterima setelah itu melalui WebSocket
+        while True:
+            data = await queue.get()
+            await event_manager.broadcast(data)
 
     except WebSocketDisconnect:
-        print("⚠️ WebSocket client disconnected.")
-
+        print("⚠️ Client disconnected")
+        event_manager.disconnect(websocket)
     except Exception as e:
         print(f"❌ WebSocket error: {e}")
-        with contextlib.suppress(RuntimeError):
-            await websocket.close(code=1011)
-
     finally:
-        print("🔚 WebSocket streaming finished or disconnected.")
-
-async def _async_generator_from_thread(generator_func, loop):
-    it = generator_func()  # hanya sekali di awal
-    while True:
-        try:
-            value = await loop.run_in_executor(None, next, it)
-            yield value
-        except StopIteration:
-            break
-        except asyncio.TimeoutError:
-            continue
-        except Exception as e:
-            print(f"Generator thread error: {e}")
-            break
+        print("🔚 Closing WebSocket stream")
+        watcher_task.cancel()
